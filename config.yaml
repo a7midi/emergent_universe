@@ -1,26 +1,29 @@
 # Simulation Parameters
 simulation:
-  total_ticks: 20000
+  total_ticks: 80000
   seed: 42  # For reproducibility
-  hidden_noise: true
+  hide_layer_index: 0
+  log_interval: 200
+  verbose: true
 
 # Causal Site (Graph) Parameters
 causal_site:
-  layers: 30
-  avg_nodes_per_layer: 20
-  edge_probability: 0.05
+  layers: 60
+  avg_nodes_per_layer: 35
+  edge_probability: 0.12
+  max_lookback_layers: 4
 
 # State & Tag Parameters
 tags:
-  alphabet_size_q: 3
+  alphabet_size_q: 101
   max_out_degree_R: 2
-  fusion_mode: "sum_mod_q" # 'quadratic' or 'injective'
+  fusion_mode: "injective" # 'quadratic' or 'injective' or 'sum_mod_q'
 
 # Particle Detection Parameters
 detector:
-  grid_size: 8  # Divide the site into 10x10 cells for hashing
-  max_history_length: 5000 # Memory optimization for hash history
-  min_loop_period: 5
+  grid_size: 30  # Divide the site into 10x10 cells for hashing
+  max_history_length: 60000 # Memory optimization for hash history
+  min_loop_period: 2
   min_particle_size: 2 # Minimum number of cells in a cluster
 
 # Visualization Parameters

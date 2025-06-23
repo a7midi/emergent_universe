@@ -1,11 +1,11 @@
 """
 state_manager.py
 
-VERSION 12: Implements a "per-tick" probabilistic hidden noise model.
-A new `hidden_noise_probability` setting in config.yaml controls the
-rate at which new information is injected into the hidden layer as a whole. This
-allows for fine-tuning the system's "temperature" to find the "habitable
-zone" for particle emergence, as suggested by the user.
+VERSION 13: Implements a "single-node" probabilistic hidden noise model.
+A `hidden_noise_probability` setting in config.yaml now controls the chance
+that ONE randomly chosen hidden node is refreshed per tick. This provides a much
+gentler and more physically nuanced way to inject novelty into the system,
+creating a "warm" environment that is neither static nor purely chaotic.
 """
 
 import numpy as np
@@ -51,19 +51,19 @@ class StateManager:
         print(f"Using fusion mode: '{self.fusion_mode}'")
         
         self.tick_counter = 0
+        self.stream_pos = 0 # Use a dedicated pointer for the info stream
         self.layer_0_nodes = self.causal_site.nodes_by_layer.get(0, [])
         
         self.use_hidden_noise = self.config['simulation'].get('hidden_noise', True)
         self.noise_prob = self.config['simulation'].get('hidden_noise_probability', 1.0)
-        print(f"Hidden layer noise enabled: {self.use_hidden_noise} (Global Probability: {self.noise_prob})")
+        print(f"Hidden layer noise enabled: {self.use_hidden_noise} (Single-node Probability: {self.noise_prob})")
         
         self.info_stream = np.array([], dtype=int)
         if self.use_hidden_noise:
-            num_hidden_sites = len(self.layer_0_nodes)
             total_ticks = self.config['simulation']['total_ticks']
-            if num_hidden_sites > 0 and total_ticks > 0:
-                stream_size = num_hidden_sites * (total_ticks + 1)
-                self.info_stream = self.rng.integers(0, self.q, size=stream_size)
+            # The stream only needs to be as long as the number of expected updates
+            stream_size = int(total_ticks * self.noise_prob) + 1
+            self.info_stream = self.rng.integers(0, self.q, size=stream_size)
         
         self.initialize_state()
 
@@ -72,9 +72,9 @@ class StateManager:
             for node_id in self.layer_0_nodes:
                 self.state[node_id] = node_id % self.q
         elif self.info_stream.size > 0:
-            initial_tags = self.info_stream[:len(self.layer_0_nodes)]
-            for i, node_id in enumerate(self.layer_0_nodes):
-                self.state[node_id] = initial_tags[i]
+            # Initialize layer 0 with a fixed pattern to start
+            for node_id in self.layer_0_nodes:
+                self.state[node_id] = node_id % self.q
 
     def _fusion(self, predecessor_tags):
         """Dispatches to the correct fusion rule based on config."""
@@ -91,19 +91,13 @@ class StateManager:
         state_at_t = np.copy(self.state)
         state_at_t_plus_1 = np.copy(state_at_t)
 
-        # --- MODIFIED NOISE INJECTION ---
-        # Perform a single Bernoulli trial for the entire hidden layer.
+        # --- MODIFIED NOISE INJECTION (Single Random Node) ---
         if self.use_hidden_noise and self.rng.random() < self.noise_prob:
-            # If the trial succeeds, the entire hidden layer is refreshed.
-            if self.info_stream.size > 0:
-                num_hidden = len(self.layer_0_nodes)
-                start_index = (self.tick_counter + 1) * num_hidden
-                end_index = start_index + num_hidden
-
-                if end_index <= len(self.info_stream):
-                    next_hidden_tags = self.info_stream[start_index:end_index]
-                    for i, node_id in enumerate(self.layer_0_nodes):
-                        state_at_t_plus_1[node_id] = next_hidden_tags[i]
+            # If the trial succeeds, update ONE randomly chosen hidden node.
+            if self.layer_0_nodes and self.stream_pos < len(self.info_stream):
+                node_to_update = self.rng.choice(self.layer_0_nodes)
+                state_at_t_plus_1[node_to_update] = self.info_stream[self.stream_pos]
+                self.stream_pos += 1 # Advance stream pointer only when a tag is used
         # --- END MODIFICATION ---
 
         for layer_index in range(1, len(self.causal_site.nodes_by_layer)):

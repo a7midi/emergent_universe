@@ -1,0 +1,6 @@
+# requirements.txt
+networkx         # For creating and managing the causal site graph
+numpy            # For efficient numerical operations
+pyyaml           # To read the config.yaml file
+matplotlib       # For plotting and visualization
+tqdm             # For progress bars during long simulations

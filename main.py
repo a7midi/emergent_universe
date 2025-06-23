@@ -3,7 +3,7 @@ main.py
 
 This is the main entry point for the Emergent Universe simulation.
 It orchestrates the initialization and execution of all core components.
-This version includes diagnostic logging and a restored final report.
+This version is updated to correctly initialize the refactored ParticleDetector.
 """
 import os
 from tqdm import tqdm
@@ -37,7 +37,10 @@ def main():
     causal_site.assign_grid_cells()
 
     state_manager = StateManager(causal_site, CONFIG)
-    particle_detector = ParticleDetector(causal_site, CONFIG)
+    
+    # --- AMENDED: Pass the state_manager to the ParticleDetector ---
+    # The detector now needs access to the state_manager to know which nodes are hidden.
+    particle_detector = ParticleDetector(causal_site, state_manager, CONFIG)
     
     visualizer = None
     if CONFIG['visualization']['enabled']:
@@ -52,7 +55,10 @@ def main():
     total_ticks = CONFIG['simulation']['total_ticks']
     log_interval = CONFIG['simulation'].get('log_interval', 100)
     
-    for tick in tqdm(range(total_ticks), desc="Simulating"):
+    # Throttling the progress bar to prevent console display issues.
+    progress_bar = tqdm(range(total_ticks), desc="Simulating", mininterval=0.5)
+    
+    for tick in progress_bar:
         state_manager.tick()
         current_state = state_manager.get_current_state()
         particles = particle_detector.detect(current_state, tick)
@@ -60,6 +66,7 @@ def main():
         if tick > 0 and tick % log_interval == 0:
             num_looping = len(particle_detector.looping_cells_last_tick)
             num_particles = len(particles)
+            # Use tqdm.write, which is safe to use with the progress bar
             tqdm.write(f"Tick {tick}: {num_looping} looping cells, {num_particles} particles found.")
 
         if visualizer and tick % CONFIG['visualization']['update_interval'] == 0:

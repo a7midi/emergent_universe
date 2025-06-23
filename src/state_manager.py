@@ -1,8 +1,11 @@
 """
 state_manager.py
 
-VERSION 12: Fixes a critical AttributeError by ensuring the fusion_table
-is only accessed when the 'injective' fusion_mode is active.
+VERSION 12: Implements a "per-tick" probabilistic hidden noise model.
+A new `hidden_noise_probability` setting in config.yaml controls the
+rate at which new information is injected into the hidden layer as a whole. This
+allows for fine-tuning the system's "temperature" to find the "habitable
+zone" for particle emergence, as suggested by the user.
 """
 
 import numpy as np
@@ -42,15 +45,17 @@ class StateManager:
         self.state = np.zeros(self.num_nodes, dtype=int)
         
         self.fusion_mode = self.config['tags'].get('fusion_mode', 'injective')
-        self.fusion_table = None # Initialize to None
+        self.fusion_table = None
         if self.fusion_mode == 'injective':
             self.fusion_table = InjectiveFusionTable(self.q)
         print(f"Using fusion mode: '{self.fusion_mode}'")
         
         self.tick_counter = 0
         self.layer_0_nodes = self.causal_site.nodes_by_layer.get(0, [])
+        
         self.use_hidden_noise = self.config['simulation'].get('hidden_noise', True)
-        print(f"Hidden layer noise enabled: {self.use_hidden_noise}")
+        self.noise_prob = self.config['simulation'].get('hidden_noise_probability', 1.0)
+        print(f"Hidden layer noise enabled: {self.use_hidden_noise} (Global Probability: {self.noise_prob})")
         
         self.info_stream = np.array([], dtype=int)
         if self.use_hidden_noise:
@@ -63,51 +68,43 @@ class StateManager:
         self.initialize_state()
 
     def initialize_state(self):
-        # Initialize layer 0 to a fixed or simple state if no noise
         if not self.use_hidden_noise:
-            print("Initializing hidden layer with a fixed, deterministic pattern.")
             for node_id in self.layer_0_nodes:
                 self.state[node_id] = node_id % self.q
-        # Initialize with the info stream if noise is enabled
         elif self.info_stream.size > 0:
             initial_tags = self.info_stream[:len(self.layer_0_nodes)]
             for i, node_id in enumerate(self.layer_0_nodes):
                 self.state[node_id] = initial_tags[i]
 
-
     def _fusion(self, predecessor_tags):
         """Dispatches to the correct fusion rule based on config."""
-        # --- BUG FIX ---
-        # The logic is now explicit for each case. No default case that can
-        # accidentally call a non-existent fusion_table.
         if self.fusion_mode == 'injective':
             if self.fusion_table:
                 return self.fusion_table.fuse(predecessor_tags)
-            else: # Should not happen if initialized correctly
-                raise RuntimeError("Injective mode selected but fusion_table not initialized.")
-        
+            raise RuntimeError("Injective mode selected but fusion_table not initialized.")
         elif self.fusion_mode == 'sum_mod_q':
             if not predecessor_tags: return 0
             return sum(predecessor_tags) % self.q
-        
-        else:
-             raise ValueError(f"Unknown fusion_mode: '{self.fusion_mode}' in config.yaml")
-        # --- END FIX ---
-
+        raise ValueError(f"Unknown fusion_mode: '{self.fusion_mode}' in config.yaml")
 
     def tick(self):
         state_at_t = np.copy(self.state)
         state_at_t_plus_1 = np.copy(state_at_t)
 
-        if self.use_hidden_noise:
+        # --- MODIFIED NOISE INJECTION ---
+        # Perform a single Bernoulli trial for the entire hidden layer.
+        if self.use_hidden_noise and self.rng.random() < self.noise_prob:
+            # If the trial succeeds, the entire hidden layer is refreshed.
             if self.info_stream.size > 0:
                 num_hidden = len(self.layer_0_nodes)
-                start_index = self.tick_counter * num_hidden
+                start_index = (self.tick_counter + 1) * num_hidden
                 end_index = start_index + num_hidden
+
                 if end_index <= len(self.info_stream):
                     next_hidden_tags = self.info_stream[start_index:end_index]
                     for i, node_id in enumerate(self.layer_0_nodes):
                         state_at_t_plus_1[node_id] = next_hidden_tags[i]
+        # --- END MODIFICATION ---
 
         for layer_index in range(1, len(self.causal_site.nodes_by_layer)):
             for node_id in self.causal_site.nodes_by_layer[layer_index]:

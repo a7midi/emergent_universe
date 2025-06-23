@@ -1,12 +1,9 @@
 """
 state_manager.py
 
-VERSION 34 (Final Experimental Version): Implements the final audit's recommendation.
-- The hidden node clock increments are now pseudo-randomly sampled (based on the
-  main seed) and confirmed to be coprime with q. This introduces true
-  heterogeneity and desynchronization to the hidden layer, which is essential
-  for complex dynamics.
-- This version is the most robust and theoretically faithful implementation.
+VERSION 35 (Final, Corrected): Implements the "Time-as-Value" injective
+fusion rule as specified in the final audit. This is the definitive version
+designed to produce complex, non-global, and localized dynamics.
 """
 
 import numpy as np
@@ -20,13 +17,20 @@ class InjectiveFusionTable:
         self.mapping = {}
         self.next_tag_internal = 0
 
-    def fuse(self, pred_tags_tuple: tuple) -> int:
-        """Creates a unique mapping for a given set of predecessor tags."""
+    # --- AMENDED: Definitive "Time-as-Value" Fusion Rule ---
+    def fuse(self, pred_tags_tuple: tuple, t: int) -> int:
+        """
+        Maps a set of predecessor tags to a stable internal value, but then
+        perturbs that value with the current tick to prevent global synchrony.
+        """
         key = tuple(sorted(pred_tags_tuple))
         if key not in self.mapping:
+            # The mapping table only grows when a new *spatial* pattern is seen.
             self.mapping[key] = self.next_tag_internal
             self.next_tag_internal += 1
-        return self.mapping[key] % self.q
+        
+        # The output tag is a function of both the stable mapping and the global time.
+        return (self.mapping[key] + t) % self.q
 
 
 class StateManager:
@@ -65,14 +69,10 @@ class StateManager:
             if sim_config.get('verbose', True):
                 print("Universe is fully observable.")
         
-        # --- AMENDED: Randomize hidden increments to be coprime with q ---
         self.hidden_increments = {}
         if self.hidden_nodes:
-            # Use a dedicated, seeded RNG for this initialization step
-            rng = np.random.default_rng(self.config['simulation']['seed'])
+            rng = np.random.default_rng(sim_config.get('seed', 42))
             for n in self.hidden_nodes:
-                # Sample a random increment until one that is coprime to q is found.
-                # For a prime q, any integer in [1, q-1] is coprime.
                 inc = rng.integers(1, self.q)
                 while gcd(inc, self.q) != 1:
                     inc = rng.integers(1, self.q)
@@ -94,7 +94,8 @@ class StateManager:
 
         if self.fusion_mode == 'injective':
             if self.fusion_table:
-                return self.fusion_table.fuse(predecessor_tags)
+                # Pass the tick counter for the time-as-value salt.
+                return self.fusion_table.fuse(predecessor_tags, self.tick_counter)
             raise RuntimeError("Injective mode selected but fusion_table not initialized.")
         
         elif self.fusion_mode == 'sum_mod_q':
@@ -111,12 +112,12 @@ class StateManager:
         state_at_t = self.state
         next_state = state_at_t.copy()
 
-        # Phase 1: Update hidden nodes with their unique, random, coprime increments.
+        # Phase 1: Update hidden nodes.
         for node_id in self.hidden_nodes:
             increment = self.hidden_increments[node_id]
             next_state[node_id] = (state_at_t[node_id] + increment) % self.q
 
-        # Phase 2: Update observable nodes based on their predecessors' state at time 't'.
+        # Phase 2: Update visible nodes.
         if self.causal_site.nodes_by_layer:
             max_layer = max(self.causal_site.nodes_by_layer.keys())
             for layer_index in range(1, max_layer + 1):
@@ -127,7 +128,7 @@ class StateManager:
                     predecessors = list(self.causal_site.get_predecessors(node_id))
                     if not predecessors:
                         continue
-
+                    
                     predecessor_tags = tuple(state_at_t[p_id] for p_id in predecessors)
                     
                     new_tag = self._fusion(predecessor_tags)
